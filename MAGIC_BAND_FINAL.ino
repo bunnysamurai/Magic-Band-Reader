@@ -1,53 +1,131 @@
+//#include <bittable.h>
+//#include <pins.h>
+
+//#define USE_PLAYER
+#define TESTING
+
 /*
- * INITIAL AUTHOR: Dominick Civitano
- *
- * See: https://github.com/miguelbalboa/rfid/tree/master/examples/rfid_write_personal_data
- *
- * Uses MIFARE RFID card using RFID-RC522 reader
- * Uses MFRC522 - Library
- * -----------------------------------------------------------------------------------------
- *             MFRC522      Arduino       Arduino   Arduino    Arduino          Arduino
- *             Reader/PCD   Uno/101       Mega      Nano v3    Leonardo/Micro   Pro Micro
- * Signal      Pin          Pin           Pin       Pin        Pin              Pin
- * -----------------------------------------------------------------------------------------
- * RST/Reset   RST          9             5         D9         RESET/ICSP-5     RST
- * SPI SS      SDA(SS)      10            53        D10        10               10
- * SPI MOSI    MOSI         11 / ICSP-4   51        D11        ICSP-4           16
- * SPI MISO    MISO         12 / ICSP-1   50        D12        ICSP-1           14
- * SPI SCK     SCK          13 / ICSP-3   52        D13        ICSP-3           15
+   INITIAL AUTHOR: Dominick Civitano
+
+   See: https://github.com/miguelbalboa/rfid/tree/master/examples/rfid_write_personal_data
+
+   Uses MIFARE RFID card using RFID-RC522 reader
+   Uses MFRC522 - Library
+   -----------------------------------------------------------------------------------------
+               MFRC522      Arduino       Arduino   Arduino    Arduino          Arduino
+               Reader/PCD   Uno/101       Mega      Nano v3    Leonardo/Micro   Pro Micro
+   Signal      Pin          Pin           Pin       Pin        Pin              Pin
+   -----------------------------------------------------------------------------------------
+   RST/Reset   RST          9             5         D9         RESET/ICSP-5     RST
+   SPI SS      SDA(SS)      10            53        D10        10               10
+   SPI MOSI    MOSI         11 / ICSP-4   51        D11        ICSP-4           16
+   SPI MISO    MISO         12 / ICSP-1   50        D12        ICSP-1           14
+   SPI SCK     SCK          13 / ICSP-3   52        D13        ICSP-3           15
 */
 #include <Adafruit_NeoPixel.h>
 #ifdef __AVR__
-  #include <avr/power.h>
+#include <avr/power.h>
 #include "SoftwareSerial.h"
+#ifdef USE_PLAYER
 #include "DFRobotDFPlayerMini.h"
+#endif // USE_PLAYER
 
+#ifdef USE_PLAYER
 // Use pins 2 and 3 to communicate with DFPlayer Mini
 static const uint8_t PIN_MP3_TX = 11; // Connects to module's RX
 static const uint8_t PIN_MP3_RX = 10; // Connects to module's TX
-
 SoftwareSerial softwareSerial(PIN_MP3_RX, PIN_MP3_TX);
 
 // Create the Player object
 DFRobotDFPlayerMini player;
+#endif // USE_PLAYER
 #endif
 
 #include <SPI.h>
 #include <MFRC522.h>
 #define PIN 6
+#define PIXEL_OFFSET 5
 #define NUMPIXELS      24
 Adafruit_NeoPixel pixels = Adafruit_NeoPixel(NUMPIXELS, PIN, NEO_GRB + NEO_KHZ800);
 #define RST_PIN         5           // Configurable, see typical pin layout above
-#define SS_PIN          53          // Configurable, see typical pin layout above
+#define SS_PIN          9          // Configurable, see typical pin layout above
+#define DEBUG_LED       13
+#define DEBUG_BUTTON    7
 
 MFRC522 mfrc522(SS_PIN, RST_PIN);   // Create MFRC522 instance
 
-const int relay = 7; //relay control pin
+const int relay = 3; //relay control pin
+
+int readErrReg(MFRC522 *p_mfrcInstance)
+{
+  int err_reg = p_mfrcInstance->PCD_ReadRegister(MFRC522::PCD_Register::ErrorReg);
+
+}
+
+void printErrRegStatus(int err_code)
+{
+  if (err_code)
+  {
+    Serial.print("Error in read register, value is: ");
+    Serial.println(err_code, HEX);
+  }
+  else
+  {
+    Serial.println("Err status okay");
+  }
+
+}
+
+void printByteVal(const char* msg, const byte val)
+{
+  Serial.print(msg);
+  Serial.println(val, HEX);
+}
+
+void printDebugInfo(MFRC522 *p_mfrcInstance)
+{
+  printByteVal("antenna gain is: ", p_mfrcInstance->PCD_GetAntennaGain());
+  p_mfrcInstance->PCD_DumpVersionToSerial();
+  const auto status1 = p_mfrcInstance->PCD_ReadRegister(MFRC522::Status1Reg);
+  const auto status2 = p_mfrcInstance->PCD_ReadRegister(MFRC522::Status2Reg);
+  const auto control = p_mfrcInstance->PCD_ReadRegister(MFRC522::ControlReg);
+}
+
+static int ledState = LOW;
+static bool gDetectedOnce = false;
+void toggleDebugLed()
+{
+
+
+  if (ledState == LOW)
+  {
+    ledState = HIGH;
+  }
+  else
+  {
+    ledState = LOW;
+  }
+  digitalWrite(DEBUG_LED, ledState);
+}
+void setDebugLedHigh()
+{
+  digitalWrite(DEBUG_LED, HIGH);
+}
+void setDebugLedLow()
+{
+  digitalWrite(DEBUG_LED, LOW);
+}
+
 
 //*****************************************************************************************//
 void setup() {
-  pinMode(relay,OUTPUT);
+  pinMode(relay, OUTPUT);
+  pinMode(PIN, OUTPUT);
+  pinMode(DEBUG_LED, OUTPUT);
+  pinMode(DEBUG_BUTTON, INPUT);
+  delay(3000);
   Serial.begin(9600);                                           // Initialize serial communications with the PC
+#ifdef USE_PLAYER
   softwareSerial.begin(9600);
   if (player.begin(softwareSerial)) {
     Serial.println("speaker on");
@@ -55,194 +133,85 @@ void setup() {
     // Set volume to maximum (0 to 30).
     player.volume(20);
     // Play the first MP3 file on the SD card
-    
+
   }
 
+#endif
+
   digitalWrite(relay, LOW);
-  SPI.begin();  
+  // Init SPI bus
+  SPI.begin();
   pixels.begin();
   pixels.show(); // Initialize all pixels to 'off'
-// Init SPI bus
   mfrc522.PCD_Init();                                              // Init MFRC522 card
+  delay(4);
   Serial.println(F("Read personal data on a MIFARE PICC:"));    //shows in serial that it is ready to read
+
+  gDetectedOnce = false;
+
+  const byte ant_gain = mfrc522.PCD_GetAntennaGain();
+  Serial.print("antenna gain is: ");
+  Serial.println(ant_gain, HEX);
+  mfrc522.PCD_DumpVersionToSerial();
+
+  Serial.print("*******Spi clock used: ");
+  Serial.println(SPI_CLOCK_DIV4);
 }
 
 //*****************************************************************************************//
-void disney(){
-  
-  pixels.setPixelColor(23, pixels.Color(0,25,0));
+void disney() {
+
+  pixels.setPixelColor(PIXEL_OFFSET, pixels.Color(0, 25, 0));
   pixels.show();
   delay(50);
-  pixels.setPixelColor(23, pixels.Color(0,0,0));
-  pixels.setPixelColor(22, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(22, pixels.Color(0,0,0));
-  pixels.setPixelColor(21, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(21, pixels.Color(0,0,0));
-  pixels.setPixelColor(20, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(20, pixels.Color(0,0,0));
-  pixels.setPixelColor(19, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(19, pixels.Color(0,0,0));
-  pixels.setPixelColor(18, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(18, pixels.Color(0,0,0));
-  pixels.setPixelColor(17, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(17, pixels.Color(0,0,0));
-  pixels.setPixelColor(16, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(16, pixels.Color(0,0,0));
-  pixels.setPixelColor(15, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(15, pixels.Color(0,0,0));
-  pixels.setPixelColor(14, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(14, pixels.Color(0,0,0));
-  pixels.setPixelColor(13, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(13, pixels.Color(0,0,0));
-  pixels.setPixelColor(12, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(12, pixels.Color(0,0,0));
-  pixels.setPixelColor(11, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50); 
-  pixels.setPixelColor(11, pixels.Color(0,0,0));
-  pixels.setPixelColor(10, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50); 
-  pixels.setPixelColor(10, pixels.Color(0,0,0));
-  pixels.setPixelColor(9, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(9, pixels.Color(0,0,0));
-  pixels.setPixelColor(8, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(8, pixels.Color(0,0,0));
-  pixels.setPixelColor(7, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(7, pixels.Color(0,0,0));
-  pixels.setPixelColor(6, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(6, pixels.Color(0,0,0));
-  pixels.setPixelColor(5, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);  
-  pixels.setPixelColor(5, pixels.Color(0,0,0));
-  pixels.setPixelColor(4, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(4, pixels.Color(0,0,0));
-  pixels.setPixelColor(3, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(3, pixels.Color(0,0,0));
-  pixels.setPixelColor(2, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(2, pixels.Color(0,0,0));
-  pixels.setPixelColor(1, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(1, pixels.Color(0,0,0));
-  pixels.setPixelColor(0, pixels.Color(0,25,0));
-  pixels.show();
-  delay(50);
-  pixels.setPixelColor(0, pixels.Color(0,0,0));
+  for ( int ii = PIXEL_OFFSET + 1; ii < NUMPIXELS; ++ii )
+  {
+    pixels.setPixelColor(ii - 1, pixels.Color(0, 0, 0));
+    pixels.setPixelColor(ii, pixels.Color(0, 25, 0));
+    pixels.show();
+    delay(50);
+  }
+  pixels.setPixelColor(NUMPIXELS - 1, pixels.Color(0, 0, 0));
   pixels.show();
   delay(50);
 }
 
 void disneyaccess()
 {
-//  player.play(1); 
+  //  player.play(1);
 
- pixels.setPixelColor(0, pixels.Color(0,25,0));
- pixels.setPixelColor(1, pixels.Color(0,25,0));
- pixels.setPixelColor(2, pixels.Color(0,25,0));
- pixels.setPixelColor(3, pixels.Color(0,25,0));
- pixels.setPixelColor(4, pixels.Color(0,25,0));
- pixels.setPixelColor(5, pixels.Color(0,25,0));
- pixels.setPixelColor(6, pixels.Color(0,25,0));
- pixels.setPixelColor(7, pixels.Color(0,25,0));
- pixels.setPixelColor(8, pixels.Color(0,25,0));
- pixels.setPixelColor(9, pixels.Color(0,25,0));
- pixels.setPixelColor(10, pixels.Color(0,25,0));
- pixels.setPixelColor(11, pixels.Color(0,25,0));
- pixels.setPixelColor(12, pixels.Color(0,25,0));
- pixels.setPixelColor(13, pixels.Color(0,25,0));
- pixels.setPixelColor(14, pixels.Color(0,25,0));
- pixels.setPixelColor(15, pixels.Color(0,25,0));
- pixels.setPixelColor(16, pixels.Color(0,25,0));
- pixels.setPixelColor(17, pixels.Color(0,25,0));
- pixels.setPixelColor(18, pixels.Color(0,25,0));
- pixels.setPixelColor(19, pixels.Color(0,25,0));
- pixels.setPixelColor(20, pixels.Color(0,25,0));
- pixels.setPixelColor(21, pixels.Color(0,25,0));
- pixels.setPixelColor(22, pixels.Color(0,25,0));
- pixels.setPixelColor(23, pixels.Color(0,25,0));
- pixels.show();
- 
- if(digitalRead(relay) == HIGH)
-    {
-   digitalWrite(relay,LOW);
-   Serial.println("Relay off"); 
-   }
-   else
-   {
-   digitalWrite(relay,HIGH);
-   Serial.println("Relay on"); 
-   }
+  for ( int ii = PIXEL_OFFSET; ii < NUMPIXELS; ++ii )
+  {
+    pixels.setPixelColor(ii, pixels.Color(0, 25, 0));
+  }
+  pixels.show();
+
+  if (digitalRead(relay) == HIGH)
+  {
+    digitalWrite(relay, LOW);
+    Serial.println("Relay off");
+  }
+  else
+  {
+    digitalWrite(relay, HIGH);
+    Serial.println("Relay on");
+  }
 
 
 }
 
 void disneyoff()
 {
-pixels.setPixelColor(0, pixels.Color(0,0,0));
- pixels.setPixelColor(1, pixels.Color(0,0,0));
- pixels.setPixelColor(2, pixels.Color(0,0,0));
- pixels.setPixelColor(3, pixels.Color(0,0,0));
- pixels.setPixelColor(4, pixels.Color(0,0,0));
- pixels.setPixelColor(5, pixels.Color(0,0,0));
- pixels.setPixelColor(6, pixels.Color(0,0,0));
- pixels.setPixelColor(7, pixels.Color(0,0,0));
- pixels.setPixelColor(8, pixels.Color(0,0,0));
- pixels.setPixelColor(9, pixels.Color(0,0,0));
- pixels.setPixelColor(10, pixels.Color(0,0,0));
- pixels.setPixelColor(11, pixels.Color(0,0,0));
- pixels.setPixelColor(12, pixels.Color(0,0,0));
- pixels.setPixelColor(13, pixels.Color(0,0,0));
- pixels.setPixelColor(14, pixels.Color(0,0,0));
- pixels.setPixelColor(15, pixels.Color(0,0,0));
- pixels.setPixelColor(16, pixels.Color(0,0,0));
- pixels.setPixelColor(17, pixels.Color(0,0,0));
- pixels.setPixelColor(18, pixels.Color(0,0,0));
- pixels.setPixelColor(19, pixels.Color(0,0,0));
- pixels.setPixelColor(20, pixels.Color(0,0,0));
- pixels.setPixelColor(21, pixels.Color(0,0,0));
- pixels.setPixelColor(22, pixels.Color(0,0,0));
- pixels.setPixelColor(23, pixels.Color(0,0,0));
- pixels.show();
+  for ( int ii = 0; ii < NUMPIXELS; ++ii )
+  {
+    pixels.setPixelColor(ii, pixels.Color(0, 0, 0));
+  }
+  pixels.show();
 }
+
+/* ============================================================================================================ */
 void loop() {
+
 
   // Prepare key - all keys are set to FFFFFFFFFFFFh at chip delivery from the factory.
   MFRC522::MIFARE_Key key;
@@ -254,9 +223,13 @@ void loop() {
   MFRC522::StatusCode status;
 
   //-------------------------------------------
+  if (!gDetectedOnce)
+  {
+    toggleDebugLed();
+  }
 
   // Reset the loop if no new card present on the sensor/reader. This saves the entire process when idle.
-  if ( ! mfrc522.PICC_IsNewCardPresent()) {
+  if ( ! mfrc522.PICC_IsNewCardPresent() ) {
     return;
   }
 
@@ -266,40 +239,48 @@ void loop() {
   }
 
   Serial.println(F("**Card Detected:**"));
+  gDetectedOnce = true;
+  if (gDetectedOnce)
+  {
+    setDebugLedHigh();
+  }
+
 
   //-------------------------------------------
-Serial.print("UID tag :");
-  String content= "";
+  Serial.print("UID tag :");
+  String content = "";
   byte letter;
-  for (byte i = 0; i < mfrc522.uid.size; i++) 
+  for (byte i = 0; i < mfrc522.uid.size; i++)
   {
-     Serial.print(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " ");
-     Serial.print(mfrc522.uid.uidByte[i], HEX);
-     content.concat(String(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " "));
-     content.concat(String(mfrc522.uid.uidByte[i], HEX));
+    Serial.print(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " ");
+    Serial.print(mfrc522.uid.uidByte[i], HEX);
+    content.concat(String(mfrc522.uid.uidByte[i] < 0x10 ? " 0" : " "));
+    content.concat(String(mfrc522.uid.uidByte[i], HEX));
   }
   Serial.println();
   Serial.print("Message : ");
   content.toUpperCase();
-  if (content.substring(1) == "04 91 28 8A D5 2C 80") //change here the UID of the card/cards that you want to give access
+  if (content.substring(1) == "3C A7 47 23") //change here the UID of the card/cards that you want to give access
   {
     Serial.println("Authorized access");
     disney();
     disney();
     disney();
     disneyaccess();
+#ifdef USE_PLAYER
     player.play(1);
+#endif // USE_PLAYER
     delay(2000);
     disneyoff();
     Serial.println();
-    
+
     delay(2500);
 
   }
- 
- else   {
+
+  else   {
     Serial.println(" Access denied");
- }
+  }
   mfrc522.PICC_DumpDetailsToSerial(&(mfrc522.uid)); //dump some details about the card
 
   //mfrc522.PICC_DumpToSerial(&(mfrc522.uid));      //uncomment this to see all blocks in hex
@@ -367,9 +348,11 @@ Serial.print("UID tag :");
 
   Serial.println(F("\n**End Reading**\n"));
 
-  delay(1000); //change value if you want to read cards faster
-
   mfrc522.PICC_HaltA();
   mfrc522.PCD_StopCrypto1();
+
+  delay(1000); //change value if you want to read cards faster
+
+
 }
 //*****************************************************************************************//
